@@ -61,7 +61,7 @@ function extractAlgDescriptor(file, id) {
             const block = clause.querySelectorAll('emu-alg')[0];
             return {
                 header: header.textContent,
-                algo: extractBlock(block)
+                steps: extractBlock(block)
             };
         }
     }).catch(err => {
@@ -69,4 +69,52 @@ function extractAlgDescriptor(file, id) {
     });
 }
 
-module.exports.extractAlgDescriptor = extractAlgDescriptor;
+var transform = require("babel-core").transform;
+var t = require("babel-core").types;
+const toRoman = require("roman-numerals").toRoman;
+
+function prefix(level, position) {
+    return [
+        // 1, 2, 3...
+        i => i,
+        // a, b, c...
+        i => String.fromCharCode(97),
+        // i, ii, iii...
+        i => toRoman,
+    ][level % 3](position + 1);
+}
+
+function createAlgStepsAST(steps, level) {
+    level = level || 0;
+    return t.blockStatement(steps.map((pair, pos) => {
+        const step = pair[0];
+        const block = pair[1];
+        let statement;
+        if (block && block.length) {
+             statement = createAlgStepsAST(block, level + 1);
+        } else {
+            statement = t.emptyStatement();
+        }
+        statement.leadingComments = '// ' + prefix(level, pos) + '. ' + step;
+        return statement;
+    }));
+}
+
+function createAlgArgsAST(header) {
+    const params = [];
+    header = header.replace(/[\[\]]/g, '');
+    const firstParentPos = header.indexOf('(');
+    const lastParentPos = header.lastIndexOf(')');
+    if (firstParentPos > 0 && lastParentPos > firstParentPos) {
+        header.substr(firstParentPos + 1, lastParentPos - 1).split(',').forEach(name => {
+            params.push(t.identifier(name.trim()));
+        });
+    }
+    return params;
+}
+
+module.exports = {
+    extractAlgDescriptor,
+    createAlgStepsAST,
+    createAlgArgsAST,
+};
