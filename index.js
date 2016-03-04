@@ -6,15 +6,7 @@ const Spec = require('ecmarkup/lib/Spec');
 const utils = require('ecmarkup/lib/utils');
 const Clause = require('ecmarkup/lib/Clause');
 const Algorithm = require('ecmarkup/lib/Algorithm');
-
-function fetch(path) {
-    return new Promise((resolve, reject) => {
-        fs.readFile(path, 'utf8', (err, data) => {
-            if (err) reject(err);
-            resolve(data);
-        });
-    });
-}
+const netFetch = require('node-fetch');
 
 function getFirstChildByTagName(elm, tagName){
     let ret = [];
@@ -40,33 +32,52 @@ function extractBlock(el) {
     return block;
 }
 
-function extractAlgDescriptor(file, id) {
-    return fetch(file)
-        .then(utils.htmlToDoc)
-        .then(doc => {
-            return new Spec(file, fetch, doc, {}).build('emu-alg', Algorithm);
-    }).then(spec => {
-        // removing all unnecessary garbage from ecmarkup output
-        Array.prototype.forEach.call(spec.doc.querySelectorAll('span[class="secnum"]'), el => {
-            el.parentElement.removeChild(el);
-        });
-        Array.prototype.forEach.call(spec.doc.querySelectorAll('span[class="anchor"]'), el => {
-            el.parentElement.removeChild(el);
-        });
-        // looking for the clause for a specific `id`
-        const clause = spec.doc.getElementById(id);
-        if (clause) {
-            // finding the first header and algo inside the clause
-            const header = clause.querySelectorAll('h1,h2,h3,h4,h5,h6')[0];
-            const block = clause.querySelectorAll('emu-alg')[0];
-            return {
-                header: header.textContent,
-                steps: extractBlock(block)
-            };
-        }
-    }).catch(err => {
-        console.log(err.stack || err);
+function extractAlgDescriptor(spec, id) {
+    // removing all unnecessary garbage from ecmarkup output
+    Array.prototype.forEach.call(spec.doc.querySelectorAll('span[class="secnum"]'), el => {
+        el.parentElement.removeChild(el);
     });
+    Array.prototype.forEach.call(spec.doc.querySelectorAll('span[class="anchor"]'), el => {
+        el.parentElement.removeChild(el);
+    });
+    // looking for the clause for a specific `id`
+    const clause = spec.doc.getElementById(id);
+    if (clause) {
+        // finding the first header and algo inside the clause
+        const header = clause.querySelectorAll('h1,h2,h3,h4,h5,h6')[0];
+        const block = clause.querySelectorAll('emu-alg')[0];
+        return {
+            header: header.textContent,
+            steps: extractBlock(block)
+        };
+    }
+}
+
+const cache = {};
+const specs = {};
+
+function diskFetch(path) {
+    console.log('Fetching from disk: ', path);
+    return new Promise((resolve, reject) => {
+        fs.readFile(path, 'utf8', (err, data) => {
+            if (err) reject(err);
+            resolve(data);
+        });
+    });
+}
+
+function fetchSpec(url) {
+    console.log('Fetching over the network: ', url);
+    if (!cache[url]) {
+        cache[url] = netFetch(url)
+            .then(res => res.text())
+            .then(utils.htmlToDoc)
+            .then(doc => {
+                specs[url] = new Spec(url, diskFetch, doc, {});
+                return specs[url].build('emu-alg', Algorithm);
+        });
+    }
+    return cache[url];
 }
 
 var transform = require("babel-core").transform;
@@ -80,7 +91,7 @@ function prefix(level, position) {
         // a, b, c...
         i => String.fromCharCode(97),
         // i, ii, iii...
-        i => toRoman,
+        i => toRoman(i).toLowerCase(),
     ][level % 3](position + 1);
 }
 
@@ -95,7 +106,10 @@ function createAlgStepsAST(steps, level) {
         } else {
             statement = t.emptyStatement();
         }
-        statement.leadingComments = '// ' + prefix(level, pos) + '. ' + step;
+        statement.leadingComments = [{
+            type: "CommentLine",
+            value: ' ' + prefix(level, pos) + '. ' + step
+        }];
         return statement;
     }));
 }
@@ -113,8 +127,63 @@ function createAlgArgsAST(header) {
     return params;
 }
 
+function expandSpecUrl(id) {
+    return 'https://rawgit.com/' + id;
+}
+
+function transformAlgFunction(code) {
+    const reSpecRef = /@spec\[(.*?)\]/g;
+    const reClauseRef = /@clause\[(.*?)\]/g;
+    const list = [];
+    var match;
+    while ((match = reSpecRef.exec(code)) !== null) {
+        list.push(fetchSpec(expandSpecUrl(match[1])));
+    }
+    return Promise.all(list)
+        .then(_ => {
+            // all specs needed for `code` are now available
+            const output = transform(code, {
+                shouldPrintComment: function (comment) {
+                    return comment;
+                },
+                plugins: [function() {
+                    return {
+                        visitor: {
+                            FunctionDeclaration(path) {
+                                const comment = (path.node.leadingComments || []).reduce((comment, o) => comment + o.value, '');
+                                if (!comment) return;
+                                reSpecRef.lastIndex = 0;
+                                reClauseRef.lastIndex = 0;
+                                const specMatch = reSpecRef.exec(comment);
+                                const clauseMatch = reClauseRef.exec(comment);
+                                if (specMatch && clauseMatch) {
+                                    const specId = specMatch[1];
+                                    const clauseId = clauseMatch[1];
+                                    const descriptor = extractAlgDescriptor(specs[expandSpecUrl(specId)], clauseId);
+                                    if (descriptor) {
+                                        // we are ready to transform
+                                        const params = createAlgArgsAST(descriptor.header);
+                                        const body = createAlgStepsAST(descriptor.steps);
+                                        path.node.params = params;
+                                        path.node.body = body;
+                                    }
+                                }
+                            },
+                        }
+                    };
+                }]
+            });
+            return output.code;
+        })
+        .catch(err => {
+            console.log(err.stack || err);
+        });
+}
+
 module.exports = {
     extractAlgDescriptor,
     createAlgStepsAST,
     createAlgArgsAST,
+    fetchSpec,
+    transform: transformAlgFunction,
 };

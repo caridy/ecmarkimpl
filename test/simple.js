@@ -1,19 +1,17 @@
-const extractAlgDescriptor = require('../').extractAlgDescriptor;
-const createAlgStepsAST = require('../').createAlgStepsAST;
-const createAlgArgsAST = require('../').createAlgArgsAST;
+"use strict";
 
-const file = __dirname + '/fixtures/foo.md';
+const transform = require('../').transform;
 
-extractAlgDescriptor(file, 'sec-todatetimeoptions').then(descriptor => {
-    const params = createAlgArgsAST(descriptor.header);
-    const body = createAlgStepsAST(descriptor.steps);
-    console.log('params: ', params);
-    console.log('body: ', body);
-    /*
-    TODO: with the params and body (which is a block statement) we should be able to
-    update any function with the corresponding steps
-    TODO: how to match body this to an existing body?
-    */
+transform(`
+
+    // @spec[tc39/ecma402/master/spec/negotiation.html]
+    // @clause[sec-canonicalizelocalelist]
+    function fo() {
+
+    }
+
+`).then(code => {
+    console.log(code);
 }).catch(error => {
     console.log(error.stack || error);
 });
