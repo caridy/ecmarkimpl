@@ -8,11 +8,11 @@ const Clause = require('ecmarkup/lib/Clause');
 const Algorithm = require('ecmarkup/lib/Algorithm');
 const netFetch = require('node-fetch');
 
-function getFirstChildByTagName(elm, tagName){
+function getFirstChildByTagName(elm, tagName) {
     let ret = [];
     const l = elm.childNodes.length;
-    for (let i = 0; i < l; ++i){
-        if (elm.childNodes[i].tagName === tagName){
+    for (let i = 0; i < l; ++i) {
+        if (elm.childNodes[i].tagName === tagName) {
             return elm.childNodes[i];
         }
     }
@@ -69,12 +69,9 @@ function diskFetch(path) {
 function fetchSpec(url) {
     console.log('Fetching over the network: ', url);
     if (!cache[url]) {
-        cache[url] = netFetch(url)
-            .then(res => res.text())
-            .then(utils.htmlToDoc)
-            .then(doc => {
-                specs[url] = new Spec(url, diskFetch, doc, {});
-                return specs[url].build('emu-alg', Algorithm);
+        cache[url] = netFetch(url).then(res => res.text()).then(utils.htmlToDoc).then(doc => {
+            specs[url] = new Spec(url, diskFetch, doc, {});
+            return specs[url].build('emu-alg', Algorithm);
         });
     }
     return cache[url];
@@ -83,16 +80,18 @@ function fetchSpec(url) {
 var transform = require("babel-core").transform;
 var t = require("babel-core").types;
 const toRoman = require("roman-numerals").toRoman;
+var traverse = require("babel-traverse");
+const reSpecRef = /@spec\[(.*?)\]/g;
+const reClauseRef = /@clause\[(.*?)\]/g;
 
 function prefix(level, position) {
     return [
-        // 1, 2, 3...
-        i => i,
-        // a, b, c...
-        i => String.fromCharCode(97),
-        // i, ii, iii...
-        i => toRoman(i).toLowerCase(),
-    ][level % 3](position + 1);
+    // 1, 2, 3...
+    i => i,
+    // a, b, c...
+    i => String.fromCharCode(97),
+    // i, ii, iii...
+    i => toRoman(i).toLowerCase()][level % 3](position + 1);
 }
 
 function createAlgStepsAST(steps, level) {
@@ -102,7 +101,7 @@ function createAlgStepsAST(steps, level) {
         const block = pair[1];
         let statement;
         if (block && block.length) {
-             statement = createAlgStepsAST(block, level + 1);
+            statement = createAlgStepsAST(block, level + 1);
         } else {
             statement = t.emptyStatement();
         }
@@ -131,53 +130,71 @@ function expandSpecUrl(id) {
     return 'https://rawgit.com/' + id;
 }
 
+const updateBodyVisitor = {
+    Statement(path) {
+        console.log(path.node);
+        // this.newBody
+        (path.node.leadingComments || []).forEach(o => {
+            this.existingAlgoComments.push(o.value);
+        });
+    }
+};
+
+const FunctionVisitor = {
+    FunctionDeclaration(path) {
+        const comment = (path.node.leadingComments || []).reduce((comment, o) => comment + o.value, '');
+        if (!comment) return;
+        reSpecRef.lastIndex = 0;
+        reClauseRef.lastIndex = 0;
+        const specMatch = reSpecRef.exec(comment);
+        const clauseMatch = reClauseRef.exec(comment);
+        if (specMatch && clauseMatch) {
+            const specId = specMatch[1];
+            const clauseId = clauseMatch[1];
+            const descriptor = extractAlgDescriptor(specs[expandSpecUrl(specId)], clauseId);
+            if (descriptor) {
+                // we are ready to transform
+                const newParams = createAlgArgsAST(descriptor.header);
+                const newBody = createAlgStepsAST(descriptor.steps);
+                const existingAlgoComments = [];
+                path.traverse(updateBodyVisitor, { newBody, existingAlgoComments });
+                console.log(existingAlgoComments);
+                // console.log(path.node.body.body);
+                // if (path.node.body.body.length === 0) {
+                //     path.node.params = newParams;
+                //     path.node.body = body;
+                // } else {
+                //     // do something else with traverse(parent, opts, scope, state, parentPath)
+                //     console.log(path.node.traverse());
+                //     traverse(path.node.body, {}, null, null, path.node.body.nodePath)
+                // }
+            }
+        }
+    }
+};
+
 function transformAlgFunction(code) {
-    const reSpecRef = /@spec\[(.*?)\]/g;
-    const reClauseRef = /@clause\[(.*?)\]/g;
     const list = [];
     var match;
     while ((match = reSpecRef.exec(code)) !== null) {
         list.push(fetchSpec(expandSpecUrl(match[1])));
     }
-    return Promise.all(list)
-        .then(_ => {
-            // all specs needed for `code` are now available
-            const output = transform(code, {
-                shouldPrintComment: function (comment) {
-                    return comment;
-                },
-                plugins: [function() {
-                    return {
-                        visitor: {
-                            FunctionDeclaration(path) {
-                                const comment = (path.node.leadingComments || []).reduce((comment, o) => comment + o.value, '');
-                                if (!comment) return;
-                                reSpecRef.lastIndex = 0;
-                                reClauseRef.lastIndex = 0;
-                                const specMatch = reSpecRef.exec(comment);
-                                const clauseMatch = reClauseRef.exec(comment);
-                                if (specMatch && clauseMatch) {
-                                    const specId = specMatch[1];
-                                    const clauseId = clauseMatch[1];
-                                    const descriptor = extractAlgDescriptor(specs[expandSpecUrl(specId)], clauseId);
-                                    if (descriptor) {
-                                        // we are ready to transform
-                                        const params = createAlgArgsAST(descriptor.header);
-                                        const body = createAlgStepsAST(descriptor.steps);
-                                        path.node.params = params;
-                                        path.node.body = body;
-                                    }
-                                }
-                            },
-                        }
-                    };
-                }]
-            });
-            return output.code;
-        })
-        .catch(err => {
-            console.log(err.stack || err);
+    return Promise.all(list).then(_ => {
+        // all specs needed for `code` are now available
+        const output = transform(code, {
+            shouldPrintComment: function (comment) {
+                return comment;
+            },
+            plugins: [function () {
+                return {
+                    visitor: FunctionVisitor
+                };
+            }]
         });
+        return output.code;
+    }).catch(err => {
+        console.log(err.stack || err);
+    });
 }
 
 module.exports = {
@@ -185,5 +202,5 @@ module.exports = {
     createAlgStepsAST,
     createAlgArgsAST,
     fetchSpec,
-    transform: transformAlgFunction,
+    transform: transformAlgFunction
 };

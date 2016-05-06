@@ -1,8 +1,6 @@
 // @spec[tc39/ecma402/blob/master/spec/negotiation.html]
 // @clause[sec-canonicalizelocalelist]
-function foo() {
-
-}
+function foo() {}
 
 export function Resolve(loader, name, referrer) {
     // 1. Assert: loader must have all of the internal slots of a Loader Instance (3.5).
