@@ -1,9 +1,25 @@
 {
   "name": "ecmarkimpl",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Ecmarkimpl CLI to match functions with the corresponding emarkup spec text definitions",
+  "keywords": [
+    "ecmarkup",
+    "ecmarkdown",
+    "ecmascript",
+    "spec",
+    "cli",
+    "tc39",
+    "specification"
+  ],
   "scripts": {
     "lint": "eslint private/*.js bin/*.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caridy/ecmarkimpl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/caridy/ecmarkimpl/issues"
   },
   "author": "Caridy Patiño <caridy@gmail.com>",
   "bin": {
