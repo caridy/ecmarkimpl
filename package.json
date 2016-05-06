@@ -1,12 +1,11 @@
 {
   "name": "ecmarkimpl",
   "version": "1.0.0",
-  "description": "",
+  "description": "Ecmarkimpl CLI to match functions with the corresponding emarkup spec text definitions",
   "scripts": {
     "lint": "eslint private/*.js bin/*.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Caridy Patiño <caridy@gmail.com>",
   "bin": {
     "ecmarkimpl": "./bin/cli.js"
   },
@@ -21,5 +20,9 @@
   },
   "devDependencies": {
     "eslint": "^2.9.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=4"
   }
 }

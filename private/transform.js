@@ -8,6 +8,8 @@ const Clause = require('ecmarkup/lib/Clause');
 const Algorithm = require('ecmarkup/lib/Algorithm');
 const netFetch = require('node-fetch');
 
+let transformedFlag;
+
 function getFirstChildByTagName(elm, tagName) {
     let ret = [];
     const l = elm.childNodes.length;
@@ -69,7 +71,12 @@ function diskFetch(path) {
 function fetchSpec(url) {
     console.log('Fetching over the network: ', url);
     if (!cache[url]) {
-        cache[url] = netFetch(url).then(res => res.text()).then(utils.htmlToDoc).then(doc => {
+        cache[url] = netFetch(url).then(res => res.text()).then(html => {
+            if (html === 'Not Found') {
+                throw new Error('Invalid spec identifier. Invalid spec text: ' + url);
+            }
+            return html;
+        }).then(utils.htmlToDoc).then(doc => {
             specs[url] = new Spec(url, diskFetch, doc, {});
             return specs[url].build('emu-alg', Algorithm);
         });
@@ -117,9 +124,9 @@ function createAlgArgsAST(header) {
     const params = [];
     header = header.replace(/[\[\]]/g, '');
     const firstParentPos = header.indexOf('(');
-    const lastParentPos = header.lastIndexOf(')');
+    const lastParentPos = header.indexOf(')');
     if (firstParentPos > 0 && lastParentPos > firstParentPos) {
-        header.substr(firstParentPos + 1, lastParentPos - 1).split(',').forEach(name => {
+        header.substring(firstParentPos + 1, lastParentPos - 1).split(',').forEach(name => {
             params.push(t.identifier(name.trim()));
         });
     }
@@ -132,7 +139,6 @@ function expandSpecUrl(id) {
 
 const updateBodyVisitor = {
     Statement(path) {
-        console.log(path.node);
         // this.newBody
         (path.node.leadingComments || []).forEach(o => {
             this.existingAlgoComments.push(o.value);
@@ -158,16 +164,18 @@ const FunctionVisitor = {
                 const newBody = createAlgStepsAST(descriptor.steps);
                 const existingAlgoComments = [];
                 path.traverse(updateBodyVisitor, { newBody, existingAlgoComments });
-                console.log(existingAlgoComments);
-                // console.log(path.node.body.body);
-                // if (path.node.body.body.length === 0) {
-                //     path.node.params = newParams;
-                //     path.node.body = body;
-                // } else {
-                //     // do something else with traverse(parent, opts, scope, state, parentPath)
-                //     console.log(path.node.traverse());
-                //     traverse(path.node.body, {}, null, null, path.node.body.nodePath)
-                // }
+                if (existingAlgoComments.length === 0) {
+                    path.node.params = newParams;
+                    path.node.body = newBody;
+                    transformedFlag = true;
+                } else {
+                    // TODO: implement the matching algo
+                    console.log('Skipping existing algo [' + clauseId + '] from ' + specId);
+                    // console.log(existingAlgoComments);
+                    // do something else with traverse(parent, opts, scope, state, parentPath)
+                    //     console.log(path.node.traverse());
+                    //     traverse(path.node.body, {}, null, null, path.node.body.nodePath)
+                }
             }
         }
     }
@@ -181,6 +189,7 @@ function transformAlgFunction(code) {
     }
     return Promise.all(list).then(_ => {
         // all specs needed for `code` are now available
+        transformedFlag = false;
         const output = transform(code, {
             shouldPrintComment: function (comment) {
                 return comment;
@@ -191,9 +200,7 @@ function transformAlgFunction(code) {
                 };
             }]
         });
-        return output.code;
-    }).catch(err => {
-        console.log(err.stack || err);
+        return transformedFlag ? output.code : undefined;
     });
 }
 

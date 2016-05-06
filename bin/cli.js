@@ -30,38 +30,59 @@ var opts = require('nomnom').script('ecmarkimpl').options({
         abbr: 'i',
         help: 'List of patterns to be ignored, e.g.: **/foo/**',
         list: true
-    }
+    },
+    dry: {
+      abbr: 'd',
+      flag: true,
+      help: 'Dry run (no changes are made to files).',
+  },
 }).parse();
 
 var log = console.log.bind(console);
 var ignore = [
-// these are the things that we know for sure we never want to inspect
-'**/node_modules/**'].concat(opts.ignore || []);
-
-var globOptions = {
-    silent: true,
-    cwd: CURRENT_PATH,
-    nodir: true,
-    realpath: true,
-    ignore: ignore
-};
-// making this async just in case we want to change it later on
-var patterns = Array.isArray(opts.glob) ? opts.glob : [opts.glob];
-
-log('Search for ' + patterns.join(' or '));
-log(' -> Ignoring: ' + ignore.join(','));
+        // these are the things that we know for sure we never want to inspect
+        '**/node_modules/**'
+    ].concat(opts.ignore || []);
 
 var files = [];
-console.log(globOptions);
-patterns.forEach(pattern => {
-    files = files.concat(glob.sync(pattern, globOptions));
-});
-// deduping...
-files = files.filter((v, i) => files.indexOf(v) === i);
+
+if (opts.path) {
+    let f;
+    try {
+        f = fs.statSync(opts.path);
+    } catch (e) {}
+    if (!f) {
+        log('Invalid path ' + opts.path);
+        process.exit(1);
+    }
+    if (f.isFile()) {
+        files.push(opts.path);
+    }
+}
+
+if (files.length === 0) {
+    var globOptions = {
+        silent: true,
+        cwd: opts.path || CURRENT_PATH,
+        nodir: true,
+        realpath: true,
+        ignore: ignore
+    };
+    // making this async just in case we want to change it later on
+    var patterns = Array.isArray(opts.glob) ? opts.glob : [opts.glob];
+
+    log('Search for ' + patterns.join(' or '));
+    log(' -> Ignoring: ' + ignore.join(','));
+
+    patterns.forEach(pattern => {
+        files = files.concat(glob.sync(pattern, globOptions));
+    });
+    // deduping...
+    files = files.filter((v, i) => files.indexOf(v) === i);
+    log('----------------\nFound ' + files.length + ' matching files.');
+}
 
 if (files.length) {
-    log('----------------\nFound ' + files.length + ' matching files.');
-
     var result = {
         error: 0,
         ok: 0,
@@ -80,11 +101,6 @@ if (files.length) {
         }
         if (result.error) {
             log(result.error + ' parsing error(s).');
-            fs.writeFileSync(path.resolve('codemod.log'), failedFiles.join('\n'), 'utf8');
-        }
-        if (opts.output) {
-            log('\nWritting list of modified files into ' + path.resolve(opts.output));
-            fs.writeFileSync(path.resolve(opts.output), modifiedFiles.join('\n'), 'utf8');
         }
     }
 
@@ -93,24 +109,30 @@ if (files.length) {
         if (file) {
             let oldCode = fs.readFileSync(file, 'utf8');
             transform(oldCode).then(newCode => {
-                if (oldCode === newCode) {
+                if (newCode === undefined) {
                     log('[nochange] ' + file);
                     result.nochange++;
                 } else {
-                    // fs.writeFileSync(file, newCode, 'utf8');
+                    if (!opts.dry) {
+                        fs.writeFileSync(file, newCode, 'utf8');
+                    }
                     log('[transformed] ' + file);
                     result.ok++;
                     modifiedFiles.push(file);
                 }
-            }).catch(error => {
+            }).catch(err => {
                 log('[error] ' + file);
+                log('\t' + err.stack || err);
                 result.error++;
                 failedFiles.push(file);
-                log(err.stack || err);
             }).then(runNext);
         } else {
             logResults(result);
         }
+    }
+
+    if (opts.dry) {
+        log('Running in dry-run mode...');
     }
 
     // running tranform on each individual matching file in
