@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const ecmarkup = require('ecmarkup/lib/ecmarkup');
-const Spec = require('ecmarkup/lib/Spec');
+const { default: Spec } = require('ecmarkup/lib/Spec');
 const utils = require('ecmarkup/lib/utils');
 const Clause = require('ecmarkup/lib/Clause');
 const Algorithm = require('ecmarkup/lib/Algorithm');
